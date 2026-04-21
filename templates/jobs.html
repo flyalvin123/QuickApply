@@ -88,7 +88,12 @@
         </div>
         <form method="post" action="{{ url_for('create_excluded_company_entry') }}" class="add-term-form top-space-sm" data-native-scroll-restore>
           <input type="hidden" name="return_to" value="{{ current_query_url }}" />
-          <input type="text" name="company_name" placeholder="手工加入需要屏蔽的公司" />
+          <input
+            type="text"
+            name="company_name"
+            data-i18n-placeholder="手工加入需要屏蔽的公司"
+            placeholder="手工加入需要屏蔽的公司"
+          />
           <button type="submit" class="ghost-button">加入排除</button>
         </form>
       </article>

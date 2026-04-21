@@ -80,6 +80,7 @@
     { zh: "当前状态", en: "Current Status" },
     { zh: "自动刷新", en: "Auto Refresh" },
     { zh: "待机", en: "Idle" },
+    { zh: "后台待命", en: "Background Idle" },
     { zh: "未启动", en: "Not Scheduled" },
     { zh: "当前没有后台抓取任务。", en: "No crawl task is running in the background." },
     { zh: "未记录工作区", en: "Workspace missing" },

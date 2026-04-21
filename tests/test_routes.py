@@ -123,12 +123,17 @@ def test_dashboard_routes_render_with_admin_shell(tmp_path, monkeypatch) -> None
     assert "内容管理" in dashboard_html
     assert 'data-language-option="zh"' in dashboard_html
     assert 'data-language-option="en"' in dashboard_html
+    assert 'data-i18n-text="后台待命"' in dashboard_html
     assert '/static/i18n.js' in dashboard_html
     assert "Scientific ML Scientist" in jobs_html
     assert "简历精修" in jobs_html
     assert "投递追踪页" in jobs_html
+    assert 'data-i18n-placeholder="手工加入需要屏蔽的公司"' in jobs_html
     assert "新增画像" in crawler_html
+    assert 'data-i18n-placeholder="可留空，自动根据名称生成"' in crawler_html
     assert "https://www.linkedin.com/jobs/search/" in crawler_html
+    assert 'data-i18n-placeholder="LinkedIn / Indeed / 内推公司"' in tracker_html
+    assert 'data-i18n-placeholder="职位或公司"' in tracker_html
     assert "默认折叠" in detail_html
     assert "一键生成" in detail_html
     assert "重新生成修改建议" in detail_html
@@ -176,6 +181,7 @@ def test_i18n_script_covers_remaining_ui_shell_fragments() -> None:
     assert '".jobs-summary-label"' in script_text
     assert '".term-chip-launch"' in script_text
     assert "data-i18n-text" in script_text
+    assert "后台待命" in script_text
     assert "translateScoringFormula" in script_text
     assert "最高 ([\\d.]+)" in script_text
     assert "最佳 ([\\d.]+)" in script_text
@@ -2028,7 +2034,8 @@ def test_application_tracker_supports_keyword_and_stage_filters(tmp_path, monkey
     assert "Computational Scientist" in filtered_html
     assert "Manual Research Scientist" not in filtered_html
     assert "Data Scientist" not in filtered_html
-    assert 'name="keyword" value="hidden"' in filtered_html
+    assert 'name="keyword"' in filtered_html
+    assert 'value="hidden"' in filtered_html
     assert '<option value="interviewed" selected>Interviewed</option>' in filtered_html
     assert "关键词：hidden" in filtered_html
     assert "Interviewed" in filtered_html

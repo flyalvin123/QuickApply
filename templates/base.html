@@ -75,7 +75,11 @@
           </div>
           <div class="sidebar-status {% if refresh_state.running %}running{% endif %}">
             <span class="status-dot"></span>
-            <span class="sidebar-status-copy" id="sidebar-status-copy">
+            <span
+              class="sidebar-status-copy"
+              id="sidebar-status-copy"
+              data-i18n-text="{{ ('抓取中：' ~ refresh_state.profile_label) if refresh_state.running else '后台待命' }}"
+            >
               {% if refresh_state.running %}
               抓取中：{{ refresh_state.profile_label }}
               {% else %}
