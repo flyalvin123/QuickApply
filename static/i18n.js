@@ -1,5 +1,5 @@
 (() => {
-  const STORAGE_KEY = "quickapply:ui-language";
+  const STORAGE_KEY = "resume-job-monitor:ui-language";
   const DEFAULT_LANGUAGE = "zh";
   const SUPPORTED_LANGUAGES = new Set(["zh", "en"]);
   const SKIP_SELECTOR = [
@@ -80,7 +80,6 @@
     { zh: "当前状态", en: "Current Status" },
     { zh: "自动刷新", en: "Auto Refresh" },
     { zh: "待机", en: "Idle" },
-    { zh: "后台待命", en: "Background Idle" },
     { zh: "未启动", en: "Not Scheduled" },
     { zh: "当前没有后台抓取任务。", en: "No crawl task is running in the background." },
     { zh: "未记录工作区", en: "Workspace missing" },
@@ -166,9 +165,6 @@
     { zh: "当前筛选条件下还没有职位。可以回到 Crawler 增加关键词或刷新一次。", en: "No jobs match the current filters. Go back to Crawler to add keywords or refresh." },
     { zh: "全部", en: "All" },
     { zh: "最近刷新", en: "Recently Refreshed" },
-    { zh: "最高", en: "Best" },
-    { zh: "供给", en: "Supply" },
-    { zh: "画像供给权重", en: "Market priority" },
     { zh: "匹配分", en: "Match Score" },
     { zh: "最近 24 小时", en: "Last 24 Hours" },
     { zh: "追踪概览", en: "Tracking Overview" },
@@ -183,9 +179,6 @@
     { zh: "7 日", en: "7 Days" },
     { zh: "本月", en: "This Month" },
     { zh: "30 日", en: "30 Days" },
-    { zh: "剩余", en: "Remaining" },
-    { zh: "已投递", en: "Applied" },
-    { zh: "已查阅", en: "Reviewed" },
     { zh: "爬取", en: "Crawled" },
     { zh: "手工新增", en: "Manual Add" },
     { zh: "没有抓到的岗位，也可以先录入这里继续跟踪", en: "Jobs that were not crawled can still be tracked here." },
@@ -214,8 +207,8 @@
     { zh: "追加事件", en: "Add Event" },
     { zh: "取消追踪", en: "Stop Tracking" },
     { zh: "删除记录", en: "Delete Record" },
-    { zh: "当前范围无数据。", en: "No data is available for the selected range." },
     { zh: "当前筛选条件下还没有投递追踪记录。", en: "No tracked applications match the current filters." },
+    { zh: "当前范围无数据。", en: "No data is available for the selected range." },
     { zh: "Session 概览", en: "Session Overview" },
     { zh: "这里不再强调旧流水线，而是集中看 advice、session 和 PDF 是否可继续使用", en: "This page focuses on advice, sessions, and PDFs instead of the old pipeline." },
     { zh: "总记录", en: "Total Records" },
@@ -272,11 +265,9 @@
     { zh: "手工加入需要屏蔽的公司", en: "Add a company to exclude manually" },
     { zh: "LinkedIn / Indeed / 内推公司", en: "LinkedIn / Indeed / referral company" },
     { zh: "比如：内推人、当前状态、面试安排、需要补充的材料", en: "Example: referrer, current stage, interview schedule, materials to prepare" },
-    { zh: "例如：约到 phone screen / 推荐人已介绍 / 面试失败原因", en: "Example: phone screen booked / referral intro completed / interview feedback" },
     { zh: "职位或公司", en: "Job title or company" },
     { zh: "可留空，自动根据名称生成", en: "Optional. Auto-generate from the name if left empty." },
-    { zh: "例如 \"growth marketing manager\" saas | \"customer success manager\" b2b", en: "e.g. \"growth marketing manager\" saas | \"customer success manager\" b2b" },
-    { zh: "新增搜索关键词，例如 \"growth marketing manager\" saas", en: "Add a search keyword, for example \"growth marketing manager\" saas" },
+    { zh: "新增搜索关键词，例如 \"scientific machine learning\" molecules", en: "Add a search keyword, for example \"scientific machine learning\" molecules" },
     { zh: "删除关键词", en: "Delete keyword" },
   ];
 
@@ -520,8 +511,6 @@
     ".table-header span",
     ".table-sort-link",
     ".jobs-summary-pill",
-    ".jobs-summary-label",
-    ".term-chip-launch",
     ".row-inline-button",
     ".ghost-link",
     ".primary-link",
@@ -619,7 +608,7 @@
     }
     applyLanguage(document, language);
     window.dispatchEvent(
-      new CustomEvent("quickapply:languagechange", {
+      new CustomEvent("resume-job-monitor:languagechange", {
         detail: { language },
       }),
     );
@@ -754,43 +743,6 @@
     }
   }
 
-  function applyDataTranslations(root, language) {
-    for (const element of root.querySelectorAll("[data-i18n-text]")) {
-      if (!(element instanceof Element) || shouldSkipElement(element)) {
-        continue;
-      }
-      const baselineText = element.getAttribute("data-i18n-text") || "";
-      const translated = translateTextValue(baselineText, language);
-      if (translated !== element.textContent) {
-        element.textContent = translated;
-      }
-    }
-
-    for (const element of root.querySelectorAll("[data-i18n-placeholder]")) {
-      if (!(element instanceof Element)) {
-        continue;
-      }
-      const baselineValue = element.getAttribute("data-i18n-placeholder") || "";
-      element.setAttribute("placeholder", translateAttributeValue(baselineValue, language));
-    }
-
-    for (const element of root.querySelectorAll("[data-i18n-title]")) {
-      if (!(element instanceof Element)) {
-        continue;
-      }
-      const baselineValue = element.getAttribute("data-i18n-title") || "";
-      element.setAttribute("title", translateAttributeValue(baselineValue, language));
-    }
-
-    for (const element of root.querySelectorAll("[data-i18n-aria-label]")) {
-      if (!(element instanceof Element)) {
-        continue;
-      }
-      const baselineValue = element.getAttribute("data-i18n-aria-label") || "";
-      element.setAttribute("aria-label", translateAttributeValue(baselineValue, language));
-    }
-  }
-
   function syncLanguageSwitch(root, language) {
     for (const button of root.querySelectorAll("[data-language-option]")) {
       if (!(button instanceof HTMLButtonElement)) continue;
@@ -809,8 +761,6 @@
         applyTextTranslation(element, language);
       }
     }
-
-    applyDataTranslations(root, language);
 
     for (const label of root.querySelectorAll("label")) {
       applyLabelTranslation(label, language);

@@ -9,7 +9,7 @@
         <p class="section-kicker">Tailor Workspace</p>
         <h3>{{ job.title }}</h3>
         <p class="row-subtitle workbench-hero-subtitle">
-          {{ job.company }} · {{ job.location_text or "地点未注明" }} · {{ job.source_site|replace("_", " ")|title }}
+          {{ job.company }} · {{ job.location_text or "地点未注明" }} · {{ job_source_summary(job) }}
         </p>
       </div>
 
@@ -27,7 +27,7 @@
             type="button"
             class="ghost-button"
             id="open-job-side"
-            data-open-url="{{ job.job_url or url_for('job_preview', job_id=job.id) }}"
+            data-open-url="{{ job_browser_target_url(job) }}"
             data-browser-window-route="{{ url_for('open_job_browser_window', job_id=job.id) }}"
           >岗位描述窗口</button>
           {% if job.job_url %}
@@ -822,7 +822,7 @@
         method: "POST",
         headers: {
           Accept: "application/json",
-          "X-Requested-With": "quickapply",
+          "X-Requested-With": "resume-job-monitor",
         },
         body,
       });

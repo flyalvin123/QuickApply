@@ -10,6 +10,13 @@ import re
 from sqlalchemy import desc, func, or_
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from app.job_dedupe import (
+    build_job_dedupe_key,
+    dump_source_variants,
+    load_source_variants,
+    merge_source_variants,
+    pick_primary_source_variant,
+)
 from app.location_utils import COUNTRY_FILTER_OPTIONS, job_country_label, matches_location_query
 from app.models import (
     ApplicationTrack,
@@ -79,6 +86,40 @@ def _local_date_bucket(value: datetime | None) -> date | None:
     return local_dt.date()
 
 
+def _date_span(start_date: date, end_date: date) -> list[date]:
+    if start_date > end_date:
+        return []
+    total_days = (end_date - start_date).days
+    return [start_date + timedelta(days=offset) for offset in range(total_days + 1)]
+
+
+def _clean_text(value: str) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _pick_preferred_text(current_value: str, incoming_value: str) -> str:
+    current_text = _clean_text(current_value)
+    incoming_text = _clean_text(incoming_value)
+    if not current_text:
+        return incoming_text
+    if len(incoming_text) > len(current_text):
+        return incoming_text
+    return current_text
+
+
+def _earliest_datetime(
+    left: datetime | None,
+    right: datetime | None,
+) -> datetime | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    left_key = left.replace(tzinfo=timezone.utc) if left.tzinfo is None else left.astimezone(timezone.utc)
+    right_key = right.replace(tzinfo=timezone.utc) if right.tzinfo is None else right.astimezone(timezone.utc)
+    return left if left_key <= right_key else right
+
+
 class JobRepository:
     def __init__(self, database_url: str) -> None:
         if database_url.startswith("sqlite:///"):
@@ -90,6 +131,7 @@ class JobRepository:
     def init_db(self) -> None:
         SQLModel.metadata.create_all(self.engine)
         self._ensure_sqlite_schema()
+        self.repair_job_dedupe_data()
 
     def _ensure_sqlite_schema(self) -> None:
         if not str(self.engine.url).startswith("sqlite"):
@@ -101,7 +143,9 @@ class JobRepository:
                 {
                     "applied_at": "DATETIME",
                     "dismissed_at": "DATETIME",
+                    "dedupe_key": "TEXT DEFAULT ''",
                     "market_alignment": "FLOAT",
+                    "source_variants_json": "TEXT DEFAULT ''",
                 },
             )
             self._ensure_columns(
@@ -145,61 +189,238 @@ class JobRepository:
                 f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}"
             )
 
+    def _job_dedupe_key(self, job: JobRecord) -> str:
+        return build_job_dedupe_key(
+            title=job.title,
+            company=job.company,
+        )
+
+    def _source_variants_for_job(self, job: JobRecord) -> list[dict[str, str]]:
+        return load_source_variants(
+            job.source_variants_json,
+            fallback_site=job.source_site,
+            fallback_url=job.job_url,
+        )
+
+    def _refresh_primary_source(self, job: JobRecord) -> None:
+        variants = self._source_variants_for_job(job)
+        job.source_variants_json = dump_source_variants(variants)
+        primary_variant = pick_primary_source_variant(variants)
+        if primary_variant.get("site"):
+            job.source_site = primary_variant["site"]
+        if primary_variant.get("url"):
+            job.job_url = primary_variant["url"]
+
+    def _bootstrap_job_record(self, job: JobRecord) -> None:
+        job.dedupe_key = self._job_dedupe_key(job)
+        job.last_seen_at = _earliest_datetime(job.last_seen_at, job.first_seen_at)
+        job.last_refreshed_at = _earliest_datetime(
+            job.last_refreshed_at,
+            job.first_seen_at,
+        )
+        self._refresh_primary_source(job)
+
+    def _merge_job_record(self, target: JobRecord, incoming: JobRecord) -> None:
+        self._bootstrap_job_record(target)
+        self._bootstrap_job_record(incoming)
+
+        merged_variants = merge_source_variants(
+            self._source_variants_for_job(target),
+            self._source_variants_for_job(incoming),
+        )
+        target.source_variants_json = dump_source_variants(merged_variants)
+        primary_variant = pick_primary_source_variant(merged_variants)
+        if primary_variant.get("site"):
+            target.source_site = primary_variant["site"]
+        if primary_variant.get("url"):
+            target.job_url = primary_variant["url"]
+
+        target.title = _pick_preferred_text(target.title, incoming.title)
+        target.company = _pick_preferred_text(target.company, incoming.company)
+        target.location_text = _pick_preferred_text(target.location_text, incoming.location_text)
+        target.city = _pick_preferred_text(target.city, incoming.city)
+        target.state = _pick_preferred_text(target.state, incoming.state)
+        target.country = _pick_preferred_text(target.country, incoming.country)
+        target.company_url = _pick_preferred_text(target.company_url, incoming.company_url)
+        target.interval = _pick_preferred_text(target.interval, incoming.interval)
+        target.currency = _pick_preferred_text(target.currency, incoming.currency)
+        target.description = _pick_preferred_text(target.description, incoming.description)
+        target.is_remote = target.is_remote or incoming.is_remote
+
+        if target.min_amount is None:
+            target.min_amount = incoming.min_amount
+        elif incoming.min_amount is not None:
+            target.min_amount = min(target.min_amount, incoming.min_amount)
+        if target.max_amount is None:
+            target.max_amount = incoming.max_amount
+        elif incoming.max_amount is not None:
+            target.max_amount = max(target.max_amount, incoming.max_amount)
+
+        target.date_posted = _earliest_datetime(target.date_posted, incoming.date_posted)
+        target.first_seen_at = _earliest_datetime(target.first_seen_at, incoming.first_seen_at)
+        target.last_seen_at = _earliest_datetime(target.last_seen_at, incoming.last_seen_at)
+        target.last_refreshed_at = _earliest_datetime(
+            target.last_refreshed_at,
+            incoming.last_refreshed_at,
+        )
+        target.applied_at = _earliest_datetime(target.applied_at, incoming.applied_at)
+        target.dismissed_at = _earliest_datetime(target.dismissed_at, incoming.dismissed_at)
+
+        if incoming.score > target.score:
+            target.profile_slug = incoming.profile_slug
+            target.profile_label = incoming.profile_label
+            target.search_term = incoming.search_term
+            target.score = incoming.score
+            target.title_similarity = incoming.title_similarity
+            target.keyword_coverage = incoming.keyword_coverage
+            target.domain_similarity = incoming.domain_similarity
+            target.market_alignment = incoming.market_alignment
+            target.penalty_applied = incoming.penalty_applied
+            target.matched_keywords = incoming.matched_keywords
+            target.missing_keywords = incoming.missing_keywords
+            target.explanation = incoming.explanation
+        else:
+            target.profile_slug = target.profile_slug or incoming.profile_slug
+            target.profile_label = target.profile_label or incoming.profile_label
+            target.search_term = target.search_term or incoming.search_term
+            target.matched_keywords = _pick_preferred_text(
+                target.matched_keywords,
+                incoming.matched_keywords,
+            )
+            target.missing_keywords = _pick_preferred_text(
+                target.missing_keywords,
+                incoming.missing_keywords,
+            )
+            target.explanation = _pick_preferred_text(target.explanation, incoming.explanation)
+
+        target.dedupe_key = self._job_dedupe_key(target)
+        self._refresh_primary_source(target)
+
+    def _merge_linked_tracks_for_job(self, session: Session, job_id: int) -> None:
+        tracks = list(
+            session.exec(
+                select(ApplicationTrack)
+                .where(
+                    ApplicationTrack.job_id == job_id,
+                    ApplicationTrack.source_kind == "linked",
+                )
+                .order_by(ApplicationTrack.applied_at, ApplicationTrack.id)
+            ).all()
+        )
+        if len(tracks) <= 1:
+            return
+
+        keep = tracks[0]
+        for duplicate in tracks[1:]:
+            keep.applied_at = _earliest_datetime(keep.applied_at, duplicate.applied_at) or keep.applied_at
+            if duplicate.current_stage_at and (
+                keep.current_stage_at is None or duplicate.current_stage_at >= keep.current_stage_at
+            ):
+                keep.current_stage = duplicate.current_stage or keep.current_stage
+                keep.current_stage_at = duplicate.current_stage_at
+                keep.latest_notes = duplicate.latest_notes or keep.latest_notes
+            keep.title = keep.title or duplicate.title
+            keep.company = keep.company or duplicate.company
+            keep.source_site = keep.source_site or duplicate.source_site
+            keep.profile_slug = keep.profile_slug or duplicate.profile_slug
+            keep.profile_label = keep.profile_label or duplicate.profile_label
+            keep.job_url = keep.job_url or duplicate.job_url
+            keep.notes = keep.notes or duplicate.notes
+            keep.latest_notes = keep.latest_notes or duplicate.latest_notes
+            keep.updated_at = datetime.now(timezone.utc)
+            for event in session.exec(
+                select(ApplicationTrackEvent).where(ApplicationTrackEvent.track_id == duplicate.id)
+            ).all():
+                event.track_id = keep.id or event.track_id
+                session.add(event)
+            session.delete(duplicate)
+        session.add(keep)
+
+    def repair_job_dedupe_data(self) -> None:
+        with Session(self.engine) as session:
+            jobs = list(session.exec(select(JobRecord).order_by(JobRecord.id)).all())
+            if not jobs:
+                return
+
+            grouped: dict[str, list[JobRecord]] = defaultdict(list)
+            for job in jobs:
+                self._bootstrap_job_record(job)
+                grouped[job.dedupe_key or job.unique_key].append(job)
+
+            for dedupe_key, group in grouped.items():
+                keep = group[0]
+                keep.dedupe_key = dedupe_key
+                for duplicate in group[1:]:
+                    self._merge_job_record(keep, duplicate)
+                    for track in session.exec(
+                        select(ApplicationTrack).where(ApplicationTrack.job_id == duplicate.id)
+                    ).all():
+                        track.job_id = keep.id
+                        session.add(track)
+                    for run in session.exec(
+                        select(TailorRun).where(TailorRun.job_id == duplicate.id)
+                    ).all():
+                        run.job_id = keep.id
+                        session.add(run)
+                    session.delete(duplicate)
+                self._merge_linked_tracks_for_job(session, keep.id or 0)
+                session.add(keep)
+
+            session.commit()
+
     def upsert_jobs(self, jobs: Sequence[JobRecord]) -> int:
         if not jobs:
             return 0
 
-        keys = [job.unique_key for job in jobs]
-        now = datetime.now(timezone.utc)
+        incoming_by_key: dict[str, JobRecord] = {}
+        for job in jobs:
+            self._bootstrap_job_record(job)
+            current = incoming_by_key.get(job.dedupe_key or job.unique_key)
+            if current is None:
+                incoming_by_key[job.dedupe_key or job.unique_key] = job
+                continue
+            self._merge_job_record(current, job)
+
+        keys = list(incoming_by_key)
 
         with Session(self.engine) as session:
             existing_records = session.exec(
-                select(JobRecord).where(JobRecord.unique_key.in_(keys))
+                select(JobRecord).where(JobRecord.dedupe_key.in_(keys))
             ).all()
-            existing_by_key = {record.unique_key: record for record in existing_records}
+            existing_by_key: dict[str, JobRecord] = {}
+            for record in existing_records:
+                self._bootstrap_job_record(record)
+                dedupe_key = record.dedupe_key or record.unique_key
+                current_existing = existing_by_key.get(dedupe_key)
+                if current_existing is None:
+                    existing_by_key[dedupe_key] = record
+                    continue
+                self._merge_job_record(current_existing, record)
+                for track in session.exec(
+                    select(ApplicationTrack).where(ApplicationTrack.job_id == record.id)
+                ).all():
+                    track.job_id = current_existing.id
+                    session.add(track)
+                for run in session.exec(
+                    select(TailorRun).where(TailorRun.job_id == record.id)
+                ).all():
+                    run.job_id = current_existing.id
+                    session.add(run)
+                session.delete(record)
             saved = 0
 
-            for job in jobs:
-                current = existing_by_key.get(job.unique_key)
+            for dedupe_key, job in incoming_by_key.items():
+                current = existing_by_key.get(dedupe_key)
                 if current is None:
-                    job.first_seen_at = now
-                    job.last_seen_at = now
-                    job.last_refreshed_at = now
+                    job.dedupe_key = dedupe_key
                     session.add(job)
+                    existing_by_key[dedupe_key] = job
                     saved += 1
                     continue
 
-                # 中文注释：同一职位重复抓到时保留首次发现时间，只更新动态字段。
-                current.profile_slug = job.profile_slug
-                current.profile_label = job.profile_label
-                current.search_term = job.search_term
-                current.source_site = job.source_site
-                current.title = job.title
-                current.company = job.company
-                current.location_text = job.location_text
-                current.city = job.city
-                current.state = job.state
-                current.country = job.country
-                current.job_url = job.job_url
-                current.company_url = job.company_url
-                current.interval = job.interval
-                current.currency = job.currency
-                current.min_amount = job.min_amount
-                current.max_amount = job.max_amount
-                current.is_remote = job.is_remote
-                current.score = job.score
-                current.title_similarity = job.title_similarity
-                current.keyword_coverage = job.keyword_coverage
-                current.domain_similarity = job.domain_similarity
-                current.market_alignment = job.market_alignment
-                current.penalty_applied = job.penalty_applied
-                current.matched_keywords = job.matched_keywords
-                current.missing_keywords = job.missing_keywords
-                current.explanation = job.explanation
-                current.description = job.description
-                current.date_posted = job.date_posted
-                current.last_seen_at = now
-                current.last_refreshed_at = now
+                # 中文注释：同一职位重复抓到时保留最早时间，不再把旧岗位刷新到最新时间。
+                self._merge_job_record(current, job)
+                session.add(current)
                 saved += 1
 
             session.commit()
@@ -801,7 +1022,7 @@ class JobRepository:
             end_date = max(today_local, max(discovered_dates))
             range_key = "all"
 
-        labels = [start_date + timedelta(days=index) for index in range((end_date - start_date).days + 1)]
+        labels = _date_span(start_date, end_date)
         series = {
             key: [series_buckets[key].get(label, 0) for label in labels]
             for key in series_buckets

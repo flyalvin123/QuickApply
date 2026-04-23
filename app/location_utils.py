@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 import re
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from app.models import JobRecord
 
@@ -177,6 +177,63 @@ def linkedin_jobs_search_url(keywords: str, location: str = "") -> str:
     if not query:
         return "https://www.linkedin.com/jobs/search/"
     return f"https://www.linkedin.com/jobs/search/?{query}"
+
+
+def extract_linkedin_job_id(url: str) -> str:
+    normalized_url = url.strip()
+    if not normalized_url:
+        return ""
+
+    url_parts = urlsplit(normalized_url)
+    for key, value in parse_qsl(url_parts.query, keep_blank_values=True):
+        if key == "currentJobId" and value.strip():
+            return value.strip()
+
+    match = re.search(r"/jobs/view/([^/?#]+)", url_parts.path)
+    if match:
+        return match.group(1).strip()
+    return ""
+
+
+def _linkedin_search_location(job: JobRecord) -> str:
+    if job.location_text.strip():
+        return " ".join(job.location_text.split())
+
+    deduped_parts: list[str] = []
+    seen: set[str] = set()
+    for value in (job.city, job.state, job.country):
+        normalized_value = " ".join(value.split())
+        if not normalized_value:
+            continue
+        lowered = normalized_value.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped_parts.append(normalized_value)
+    return ", ".join(deduped_parts)
+
+
+def linkedin_job_detail_shell_url(job: JobRecord) -> str:
+    if job.source_site.strip().lower() != "linkedin":
+        return ""
+
+    current_job_id = extract_linkedin_job_id(job.job_url)
+    if not current_job_id:
+        return ""
+
+    search_url = linkedin_jobs_search_url(job.search_term or job.title, _linkedin_search_location(job))
+    search_url_parts = urlsplit(search_url)
+    params = dict(parse_qsl(search_url_parts.query, keep_blank_values=True))
+    params["currentJobId"] = current_job_id
+    return urlunsplit(
+        (
+            search_url_parts.scheme,
+            search_url_parts.netloc,
+            search_url_parts.path,
+            urlencode(params),
+            search_url_parts.fragment,
+        )
+    )
 
 
 def matches_location_query(job: JobRecord, location_query: str) -> bool:

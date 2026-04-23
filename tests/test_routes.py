@@ -10,6 +10,7 @@ import yaml
 from sqlmodel import Session, select
 
 import app.config as config_module
+from app.location_utils import extract_linkedin_job_id, linkedin_job_detail_shell_url
 from app.models import ApplicationTrack, JobRecord, RefreshRun, TailorRun
 
 
@@ -59,6 +60,33 @@ def _write_test_config(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return config_path
+
+
+def test_linkedin_job_detail_shell_url_builds_search_shell_url() -> None:
+    job = JobRecord(
+        unique_key="linkedin-shell-job",
+        profile_slug="scientific-ml",
+        profile_label="Scientific ML",
+        search_term='"scientific machine learning"',
+        source_site="linkedin",
+        title="Shell Scientist",
+        company="Example Labs",
+        location_text="Chicago, IL",
+        city="Chicago",
+        state="IL",
+        country="USA",
+        job_url="https://www.linkedin.com/jobs/view/route-shell-job",
+        description="",
+        score=70.0,
+    )
+
+    shell_url = linkedin_job_detail_shell_url(job)
+
+    assert extract_linkedin_job_id(job.job_url) == "route-shell-job"
+    assert shell_url.startswith("https://www.linkedin.com/jobs/search/?")
+    assert "keywords=%22scientific+machine+learning%22" in shell_url
+    assert "location=Chicago%2C+IL" in shell_url
+    assert "currentJobId=route-shell-job" in shell_url
 
 
 def test_dashboard_routes_render_with_admin_shell(tmp_path, monkeypatch) -> None:
@@ -123,22 +151,12 @@ def test_dashboard_routes_render_with_admin_shell(tmp_path, monkeypatch) -> None
     assert "内容管理" in dashboard_html
     assert 'data-language-option="zh"' in dashboard_html
     assert 'data-language-option="en"' in dashboard_html
-    assert 'data-i18n-text="后台待命"' in dashboard_html
     assert '/static/i18n.js' in dashboard_html
     assert "Scientific ML Scientist" in jobs_html
     assert "简历精修" in jobs_html
     assert "投递追踪页" in jobs_html
-    assert 'data-i18n-placeholder="手工加入需要屏蔽的公司"' in jobs_html
     assert "新增画像" in crawler_html
-    assert 'data-i18n-placeholder="可留空，自动根据名称生成"' in crawler_html
     assert "https://www.linkedin.com/jobs/search/" in crawler_html
-    assert "供给" not in crawler_html
-    assert "市场层级" not in crawler_html
-    assert "画像供给权重" not in crawler_html
-    assert "打分公式：" not in crawler_html
-    assert 'data-tracker-chart' in tracker_html
-    assert 'data-i18n-placeholder="LinkedIn / Indeed / 内推公司"' in tracker_html
-    assert 'data-i18n-placeholder="职位或公司"' in tracker_html
     assert "默认折叠" in detail_html
     assert "一键生成" in detail_html
     assert "重新生成修改建议" in detail_html
@@ -173,6 +191,8 @@ def test_dashboard_routes_render_with_admin_shell(tmp_path, monkeypatch) -> None
     assert "工作区 / 模板" not in tailor_html
     assert "累计运行" in tailor_html
     assert "手工新增" in tracker_html
+    assert "投递数据图" in tracker_html
+    assert 'data-tracker-chart' in tracker_html
 
 
 def test_i18n_script_covers_remaining_ui_shell_fragments() -> None:
@@ -183,17 +203,14 @@ def test_i18n_script_covers_remaining_ui_shell_fragments() -> None:
     assert '".mini-surface strong"' in script_text
     assert '".muted-copy"' in script_text
     assert '".timeline-fallback-copy"' in script_text
-    assert '".jobs-summary-label"' in script_text
-    assert '".term-chip-launch"' in script_text
-    assert "data-i18n-text" in script_text
-    assert "后台待命" in script_text
     assert "translateScoringFormula" in script_text
     assert "最高 ([\\d.]+)" in script_text
     assert "最佳 ([\\d.]+)" in script_text
     assert "时间按 (.+) 解释并保存。" in script_text
     assert "打分公式：" in script_text
-    assert "Application Activity Chart" in script_text
-    assert "No data is available for the selected range." in script_text
+    assert "投递数据图" in script_text
+    assert "总时间" in script_text
+    assert "当前范围无数据。" in script_text
 
 
 def test_tailor_skill_detail_page_renders_codex_skill(tmp_path, monkeypatch) -> None:
@@ -236,7 +253,7 @@ def test_tailor_skill_detail_page_renders_codex_skill(tmp_path, monkeypatch) -> 
     assert "修改建议 Skill" in html
     assert "渲染预览" in html
     assert "原始文本" in html
-    assert "Selected Wins" in html
+    assert "Google Scholar" in html
     assert "打开 Finder 文件" in html
 
 
@@ -431,6 +448,235 @@ def test_repository_jobs_keyword_filters_and_counts_are_case_insensitive(
     }
 
 
+def test_repository_merges_cross_source_duplicates_and_keeps_earliest_time(
+    tmp_path, monkeypatch
+) -> None:
+    config_path = _write_test_config(tmp_path)
+    monkeypatch.setattr(config_module, "DEFAULT_CONFIG_PATH", config_path)
+
+    import app.main as main_module
+
+    main_module = importlib.reload(main_module)
+    web_app = main_module.create_app()
+    repository = web_app.config["repository"]
+    first_seen = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+    second_seen = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
+
+    repository.upsert_jobs(
+        [
+            JobRecord(
+                unique_key="ux-role-linkedin",
+                profile_slug="scientific-ml",
+                profile_label="Scientific ML",
+                search_term='"ux designer"',
+                source_site="linkedin",
+                title="Sr. UX Designer, AWS Applied AI Solutions",
+                company="Amazon",
+                location_text="Seattle, WA, United States",
+                city="Seattle",
+                state="WA",
+                country="USA",
+                job_url="https://www.linkedin.com/jobs/view/ux-role-linkedin",
+                description="Detailed LinkedIn description for the role.",
+                score=82.0,
+                first_seen_at=first_seen,
+                last_seen_at=first_seen,
+                last_refreshed_at=first_seen,
+            ),
+            JobRecord(
+                unique_key="ux-role-indeed-1",
+                profile_slug="scientific-ml",
+                profile_label="Scientific ML",
+                search_term='"ux designer"',
+                source_site="indeed",
+                title="Sr. UX Designer, AWS Applied AI Solutions",
+                company="Amazon",
+                location_text="New York, NY, United States",
+                city="New York",
+                state="NY",
+                country="USA",
+                job_url="https://www.indeed.com/viewjob?jk=ux-role-indeed-1",
+                description="Indeed mirror.",
+                score=79.0,
+                first_seen_at=second_seen,
+                last_seen_at=second_seen,
+                last_refreshed_at=second_seen,
+            ),
+            JobRecord(
+                unique_key="ux-role-indeed-2",
+                profile_slug="scientific-ml",
+                profile_label="Scientific ML",
+                search_term='"ux designer"',
+                source_site="indeed",
+                title="Sr. UX Designer, AWS Applied AI Solutions",
+                company="Amazon",
+                location_text="Massachusetts, United States",
+                city="Boston",
+                state="MA",
+                country="USA",
+                job_url="https://www.indeed.com/viewjob?jk=ux-role-indeed-2",
+                description="Indeed mirror two.",
+                score=78.0,
+                first_seen_at=second_seen,
+                last_seen_at=second_seen,
+                last_refreshed_at=second_seen,
+            ),
+        ]
+    )
+
+    jobs = repository.list_jobs(limit=10)
+
+    assert len(jobs) == 1
+    merged_job = jobs[0]
+    source_variants = json.loads(merged_job.source_variants_json)
+    assert merged_job.source_site == "linkedin"
+    assert merged_job.job_url == "https://www.linkedin.com/jobs/view/ux-role-linkedin"
+    assert merged_job.first_seen_at == first_seen.replace(tzinfo=None)
+    assert merged_job.last_seen_at == first_seen.replace(tzinfo=None)
+    assert merged_job.last_refreshed_at == first_seen.replace(tzinfo=None)
+    assert len(source_variants) == 3
+    assert {item["site"] for item in source_variants} == {"linkedin", "indeed"}
+
+
+def test_repository_repair_merges_existing_rows_with_stale_dedupe_keys(
+    tmp_path, monkeypatch
+) -> None:
+    config_path = _write_test_config(tmp_path)
+    monkeypatch.setattr(config_module, "DEFAULT_CONFIG_PATH", config_path)
+
+    import app.main as main_module
+
+    main_module = importlib.reload(main_module)
+    web_app = main_module.create_app()
+    repository = web_app.config["repository"]
+
+    with Session(repository.engine) as session:
+        session.add(
+            JobRecord(
+                unique_key="repair-linkedin",
+                dedupe_key="repair-linkedin-stale",
+                profile_slug="scientific-ml",
+                profile_label="Scientific ML",
+                search_term='"digital biology"',
+                source_site="linkedin",
+                title="Senior Research Scientist, Digital Biology",
+                company="NVIDIA",
+                location_text="Santa Clara, CA",
+                city="Santa Clara",
+                state="CA",
+                country="USA",
+                job_url="https://www.linkedin.com/jobs/view/repair-linkedin",
+                description="LinkedIn primary copy.",
+                score=86.0,
+            )
+        )
+        session.add(
+            JobRecord(
+                unique_key="repair-indeed",
+                dedupe_key="repair-indeed-stale",
+                profile_slug="scientific-ml",
+                profile_label="Scientific ML",
+                search_term='"digital biology"',
+                source_site="indeed",
+                title="Senior Research Scientist, Digital Biology",
+                company="NVIDIA",
+                location_text="New York, NY",
+                city="New York",
+                state="NY",
+                country="USA",
+                job_url="https://www.indeed.com/viewjob?jk=repair-indeed",
+                description="Indeed mirror copy.",
+                score=84.0,
+            )
+        )
+        session.commit()
+
+    repository.repair_job_dedupe_data()
+    jobs = repository.list_jobs(limit=10)
+
+    assert len(jobs) == 1
+    merged_job = jobs[0]
+    source_variants = json.loads(merged_job.source_variants_json)
+    assert merged_job.company == "NVIDIA"
+    assert merged_job.source_site == "linkedin"
+    assert merged_job.job_url == "https://www.linkedin.com/jobs/view/repair-linkedin"
+    assert len(source_variants) == 2
+    assert {item["site"] for item in source_variants} == {"linkedin", "indeed"}
+
+
+def test_jobs_page_renders_grouped_source_labels_for_merged_job(tmp_path, monkeypatch) -> None:
+    config_path = _write_test_config(tmp_path)
+    monkeypatch.setattr(config_module, "DEFAULT_CONFIG_PATH", config_path)
+
+    import app.main as main_module
+
+    main_module = importlib.reload(main_module)
+    web_app = main_module.create_app()
+    repository = web_app.config["repository"]
+
+    repository.upsert_jobs(
+        [
+            JobRecord(
+                unique_key="route-merged-linkedin",
+                profile_slug="scientific-ml",
+                profile_label="Scientific ML",
+                search_term='"ux designer"',
+                source_site="linkedin",
+                title="Sr. UX Designer, AWS Applied AI Solutions",
+                company="Amazon",
+                location_text="Seattle, WA, United States",
+                city="Seattle",
+                state="WA",
+                country="USA",
+                job_url="https://www.linkedin.com/jobs/view/route-merged-linkedin",
+                description="LinkedIn copy.",
+                score=82.0,
+            ),
+            JobRecord(
+                unique_key="route-merged-indeed-1",
+                profile_slug="scientific-ml",
+                profile_label="Scientific ML",
+                search_term='"ux designer"',
+                source_site="indeed",
+                title="Sr. UX Designer, AWS Applied AI Solutions",
+                company="Amazon",
+                location_text="New York, NY, United States",
+                city="New York",
+                state="NY",
+                country="USA",
+                job_url="https://www.indeed.com/viewjob?jk=route-merged-indeed-1",
+                description="Indeed copy 1.",
+                score=80.0,
+            ),
+            JobRecord(
+                unique_key="route-merged-indeed-2",
+                profile_slug="scientific-ml",
+                profile_label="Scientific ML",
+                search_term='"ux designer"',
+                source_site="indeed",
+                title="Sr. UX Designer, AWS Applied AI Solutions",
+                company="Amazon",
+                location_text="Massachusetts, United States",
+                city="Boston",
+                state="MA",
+                country="USA",
+                job_url="https://www.indeed.com/viewjob?jk=route-merged-indeed-2",
+                description="Indeed copy 2.",
+                score=79.0,
+            ),
+        ]
+    )
+
+    client = web_app.test_client()
+    html = client.get("/jobs").get_data(as_text=True)
+
+    assert "LinkedIn" in html
+    assert "Indeed1" in html
+    assert "Indeed2" in html
+    assert html.count("Sr. UX Designer, AWS Applied AI Solutions") == 1
+    assert "首次抓到" in html
+
+
 def test_jobs_page_renders_keyword_filters_counts_and_sort_urls(tmp_path, monkeypatch) -> None:
     config_path = _write_test_config(tmp_path)
     monkeypatch.setattr(config_module, "DEFAULT_CONFIG_PATH", config_path)
@@ -537,14 +783,12 @@ def test_jobs_page_renders_keyword_filters_counts_and_sort_urls(tmp_path, monkey
     assert "Research Intern" not in html
     assert 'name="include_keywords" value="postdoc"' in html
     assert 'name="exclude_keywords" value="intern"' in html
-    assert 'data-i18n-text="剩余">剩余</span>' in html
-    assert 'data-i18n-text="已投递">已投递</span>' in html
-    assert 'data-i18n-text="已查阅">已查阅</span>' in html
-    assert "<strong>2</strong>" in html
-    assert "<strong>1</strong>" in html
+    assert "剩余 <strong>2</strong>" in html
+    assert "已投递 <strong>1</strong>" in html
+    assert "已查阅 <strong>2</strong>" in html
     assert "include_keywords=postdoc" in html
     assert "exclude_keywords=intern" in html
-    assert 'const jobsKeywordStorageKey = "quickapply:jobs-keyword-filters";' in html
+    assert 'const jobsKeywordStorageKey = "resume-job-monitor:jobs-keyword-filters";' in html
     assert "localStorage.getItem(jobsKeywordStorageKey)" in html
     assert "localStorage.setItem(jobsKeywordStorageKey, JSON.stringify(payload));" in html
     assert "currentUrlHasExplicitKeywordFilters()" in html
@@ -614,7 +858,7 @@ def test_tailor_session_prompt_uses_revision_advice_markdown(tmp_path, monkeypat
         f"/jobs/{job.id}/tailor/session/prompt",
         headers={
             "Accept": "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
         },
         data={},
     )
@@ -687,7 +931,7 @@ def test_run_revision_advice_route_does_not_auto_rebuild_session(tmp_path, monke
         f"/jobs/{job.id}/tailor/revision-advice",
         headers={
             "Accept": "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
         },
         data={},
     )
@@ -793,7 +1037,7 @@ def test_revision_advice_reuses_latest_run_session_when_workspace_state_is_stale
         f"/jobs/{job.id}/tailor/revision-advice",
         headers={
             "Accept": "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
         },
         data={},
     )
@@ -863,7 +1107,7 @@ def test_run_tailor_advice_route_returns_one_click_message(tmp_path, monkeypatch
         f"/jobs/{job.id}/tailor/advice",
         headers={
             "Accept": "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
         },
         data={},
     )
@@ -914,7 +1158,7 @@ def test_run_md_agent_route_is_removed(tmp_path, monkeypatch) -> None:
         f"/jobs/{job.id}/tailor/md-agent/revision_advice/review",
         headers={
             "Accept": "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
         },
         data={},
     )
@@ -968,7 +1212,7 @@ def test_open_finder_route_uses_workspace_dir_on_macos(tmp_path, monkeypatch) ->
         f"/jobs/{job.id}/tailor/workspace/open-finder",
         headers={
             "Accept": "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
         },
         data={},
     )
@@ -1026,7 +1270,7 @@ def test_reveal_tailor_artifact_route_uses_open_r_on_macos(tmp_path, monkeypatch
         f"/jobs/{job.id}/tailor/artifact/session_instruction/reveal",
         headers={
             "Accept": "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
         },
         data={},
     )
@@ -1082,7 +1326,7 @@ def test_reveal_tailor_skill_route_uses_open_r_on_macos(tmp_path, monkeypatch) -
         f"/jobs/{job.id}/tailor/skills/revision_advice/reveal",
         headers={
             "Accept": "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
         },
         data={},
     )
@@ -1311,7 +1555,7 @@ def test_marking_applied_job_returns_json_for_async_jobs_page(tmp_path, monkeypa
         data={"action": "mark", "return_to": "/jobs"},
         headers={
             "Accept": "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
         },
     )
     payload = apply_response.get_json()
@@ -1323,6 +1567,12 @@ def test_marking_applied_job_returns_json_for_async_jobs_page(tmp_path, monkeypa
     assert payload["message"] == "已标记为已投递。"
     assert payload["job_id"] == job.id
     assert payload["remove_job"] is True
+    assert payload["remove_reason"] == "applied"
+    assert payload["summary_delta"] == {
+        "remaining_count": -1,
+        "applied_count": 1,
+        "reviewed_count": 1,
+    }
     assert "Async Applied Scientist" not in client.get("/jobs").get_data(as_text=True)
     assert len(tracks) == 1
     assert tracks[0]["track"].job_id == job.id
@@ -1351,7 +1601,7 @@ def test_jobs_page_title_opens_job_popup_and_keeps_tailor_link(tmp_path, monkeyp
                 city="Chicago",
                 state="IL",
                 country="USA",
-                job_url="https://example.com/jobs/route-popup-job",
+                job_url="https://www.linkedin.com/jobs/view/route-popup-job",
                 description="Popup target role.",
                 score=72.0,
             ),
@@ -1386,7 +1636,8 @@ def test_jobs_page_title_opens_job_popup_and_keeps_tailor_link(tmp_path, monkeyp
 
     assert popup_job is not None
     assert fallback_job is not None
-    assert f'data-open-url="{popup_job.job_url}"' in jobs_html
+    assert 'data-open-url="https://www.linkedin.com/jobs/search/?' in jobs_html
+    assert 'currentJobId=route-popup-job' in jobs_html
     assert (
         f'href="/jobs/{popup_job.id}" class="primary-link">简历精修</a>'
         in jobs_html
@@ -1510,12 +1761,13 @@ def test_jobs_page_supports_ajax_sorting_and_filter_refresh(tmp_path, monkeypatc
     assert "window.addEventListener(\"popstate\"" in jobs_html
     assert "replaceJobsNode(\"#jobs-filters\", nextDocument);" in jobs_html
     assert "replaceJobsNode(\"#jobs-table\", nextDocument);" in jobs_html
-    assert "loadJobsView(buildJobsViewUrl(form));" in jobs_html
-    assert 'const nativeFallbackScrollKey = "quickapply:jobs-native-fallback-scroll";' in jobs_html
+    assert "await loadJobsView(buildJobsViewUrl(form));" in jobs_html
+    assert 'const nativeFallbackScrollKey = "resume-job-monitor:jobs-native-fallback-scroll";' in jobs_html
     assert "const scrollRestoreSelector =" in jobs_html
     assert "form.matches(scrollRestoreSelector)" in jobs_html
     assert "form[method='post'], form[method='POST']" not in jobs_html
     assert 'window.resumeJobMonitor.openJobBrowserWindow(routeUrl, fallbackUrl' in jobs_html
+    assert "window.location.assign(url);" not in jobs_html
 
 
 def test_jobs_page_apply_form_has_native_fallback(tmp_path, monkeypatch) -> None:
@@ -1553,13 +1805,21 @@ def test_jobs_page_apply_form_has_native_fallback(tmp_path, monkeypatch) -> None
 
     assert 'data-job-apply-form' in jobs_html
     assert 'HTMLFormElement.prototype.submit.call(form);' in jobs_html
-    assert '异步提交失败，正在改用普通提交。' in jobs_html
+    assert 'function formActionUrl(form)' in jobs_html
+    assert 'form.getAttribute("action") || form.action || window.location.href' in jobs_html
+    assert 'fetch(formActionUrl(form), {' in jobs_html
+    assert '异步提交失败，请查看终端日志。' in jobs_html
     assert 'if (!form.matches("[data-job-apply-form]")) return;' in jobs_html
     assert 'rememberNativeFallbackScrollState(jobId);' in jobs_html
+    assert jobs_html.count('submitFormNatively(form);') >= 2
+    assert 'data-jobs-count-key="remaining_count"' in jobs_html
+    assert 'removeJobRowLocally(String(data.job_id || ""), data.summary_delta || {});' in jobs_html
+    assert 'updateJobsSummaryCounts(summaryDelta);' in jobs_html
     assert 'class="add-term-form top-space-sm" data-native-scroll-restore' in jobs_html
     assert 'data-native-scroll-restore' in jobs_html
     assert 'data-job-apply-form data-native-scroll-restore' not in jobs_html
     assert 'data-job-action-form data-native-scroll-restore' not in jobs_html
+    assert "window.location.assign(url);" not in jobs_html
 
 
 def test_open_job_browser_window_route_uses_chrome_window_on_macos(tmp_path, monkeypatch) -> None:
@@ -1608,7 +1868,7 @@ def test_open_job_browser_window_route_uses_chrome_window_on_macos(tmp_path, mon
         f"/jobs/{job.id}/open-browser-window",
         headers={
             "Accept": "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
         },
         data={},
     )
@@ -1619,7 +1879,8 @@ def test_open_job_browser_window_route_uses_chrome_window_on_macos(tmp_path, mon
         payload["message"]
         == "已在专用 Chrome 岗位工作窗中打开当前 LinkedIn 职位，并自动尝试展开折叠内容。当前复用你的 Chrome 配置，扩展状态按浏览器原有设置保持。"
     )
-    assert payload["opened_url"] == job.job_url
+    assert payload["opened_url"].startswith("https://www.linkedin.com/jobs/search/?")
+    assert "currentJobId=route-browser-window-job" in payload["opened_url"]
     assert payload["mode"] == "chrome_dedicated_window"
     assert payload["site_behavior"] == "linkedin_auto_expand"
     assert payload["plugin_mode"] == "reuse_chrome_profile_state"
@@ -1629,7 +1890,8 @@ def test_open_job_browser_window_route_uses_chrome_window_on_macos(tmp_path, mon
     state_path = web_app.config["browser_window_state_path"]
     saved_state = main_module.load_browser_window_state(state_path)
     assert calls[0][0] == "osascript"
-    assert calls[0][3] == job.job_url
+    assert calls[0][3].startswith("https://www.linkedin.com/jobs/search/?")
+    assert "currentJobId=route-browser-window-job" in calls[0][3]
     assert calls[0][4] == ""
     assert calls[0][5] == "http://localhost/jobs/browser-window-marker"
     assert calls[0][6] == "linkedin_auto_expand"
@@ -1674,16 +1936,26 @@ def test_open_url_in_dedicated_chrome_window_preserves_existing_window_bounds(tm
     script = calls[0][2]
     expand_script = calls[1][2]
     assert "set createdNewWindow to false" in script
+    assert "my closeMarkerTabsFromUnsafeWindows(markerUrl, appOrigin)" in script
     assert "set markerUrl to item 3 of argv" in script
     assert "set siteBehavior to item 4 of argv" in script
+    assert "set appOrigin to my originFromUrl(markerUrl)" in script
     assert "set markerTabIndex to my findTabIndexByUrl(targetWindow, markerUrl)" in script
     assert "tell targetWindow to make new tab at end of tabs" in script
     assert "set targetTabIndex to my firstNonMarkerTabIndex(targetWindow, markerUrl)" in script
     assert "set active tab index of targetWindow to targetTabIndex" in script
     assert "set targetWindow to my findWindowById(existingWindowId)" in script
     assert "if my windowHasMarkerTab(targetWindow, markerUrl) is false then" in script
-    assert "set targetWindow to my findWindowByMarker(markerUrl)" in script
-    assert "on findWindowByMarker(markerUrl)" in script
+    assert "else if my windowHasUnsafeAppTab(targetWindow, markerUrl, appOrigin) then" in script
+    assert "set targetWindow to my findWindowByMarker(markerUrl, appOrigin)" in script
+    assert "on originFromUrl(rawUrl)" in script
+    assert "return (my findTabIndexByUrl(targetWindow, markerUrl)) is 1" in script
+    assert "on isAllowedDedicatedAppUrl(candidateUrl, markerUrl, appOrigin)" in script
+    assert 'if candidateUrl contains "/jobs/" and candidateUrl contains "/preview" then return true' in script
+    assert "on windowHasUnsafeAppTab(targetWindow, markerUrl, appOrigin)" in script
+    assert "if appOrigin is not \"\" and candidateUrl starts with appOrigin then" in script
+    assert "on findWindowByMarker(markerUrl, appOrigin)" in script
+    assert "on closeMarkerTabsFromUnsafeWindows(markerUrl, appOrigin)" in script
     assert "on findTabIndexByUrl(targetWindow, expectedUrl)" in script
     assert "on firstNonMarkerTabIndex(targetWindow, markerUrl)" in script
     assert "if createdNewWindow then" in script
@@ -1699,6 +1971,40 @@ def test_open_url_in_dedicated_chrome_window_preserves_existing_window_bounds(tm
     assert calls[0][6] == "linkedin_auto_expand"
     assert calls[1][3] == "chrome-window-123"
     assert "show more" in calls[1][4]
+
+
+def test_open_url_in_dedicated_chrome_window_guards_against_reusing_main_app_window(tmp_path, monkeypatch) -> None:
+    config_path = _write_test_config(tmp_path)
+    monkeypatch.setattr(config_module, "DEFAULT_CONFIG_PATH", config_path)
+
+    import app.main as main_module
+
+    main_module = importlib.reload(main_module)
+    state_path = tmp_path / "chrome_state.json"
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, check, capture_output, text):
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="chrome-window-999\n", stderr="")
+
+    monkeypatch.setattr(main_module.subprocess, "run", fake_run)
+
+    result = main_module.open_url_in_dedicated_chrome_window(
+        "https://www.linkedin.com/jobs/search/?currentJobId=test-role",
+        state_path=state_path,
+        marker_url="http://localhost:5273/jobs/browser-window-marker",
+        site_behavior="default",
+    )
+
+    assert result.window_id == "chrome-window-999"
+    assert result.warning == ""
+    assert len(calls) == 1
+    script = calls[0][2]
+    assert "if my windowHasUnsafeAppTab(w, markerUrl, appOrigin) is false then" in script
+    assert 'set normalizedOrigin to (item 1 of urlItems) & "//" & (item 3 of urlItems)' in script
+    assert 'if candidateUrl contains "/jobs/" and candidateUrl contains "/preview" then return true' in script
+    assert 'marker_url": "http://localhost:5273/jobs/browser-window-marker"' not in script
+    assert calls[0][5] == "http://localhost:5273/jobs/browser-window-marker"
 
 
 def test_open_url_in_dedicated_chrome_window_ignores_state_from_other_marker(tmp_path, monkeypatch) -> None:
@@ -1784,7 +2090,7 @@ def test_open_job_browser_window_route_returns_fallback_when_chrome_control_fail
         f"/jobs/{job.id}/open-browser-window",
         headers={
             "Accept": "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
         },
         data={},
     )
@@ -1844,7 +2150,7 @@ def test_open_job_browser_window_route_returns_warning_when_linkedin_expand_fail
         f"/jobs/{job.id}/open-browser-window",
         headers={
             "Accept": "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
         },
         data={},
     )
@@ -1852,6 +2158,8 @@ def test_open_job_browser_window_route_returns_warning_when_linkedin_expand_fail
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["fallback"] is False
+    assert payload["opened_url"].startswith("https://www.linkedin.com/jobs/search/?")
+    assert "currentJobId=route-browser-window-warning-job" in payload["opened_url"]
     assert payload["site_behavior"] == "linkedin_auto_expand"
     assert payload["warning"] == "LinkedIn 自动展开附加步骤失败：expand failed"
     assert "LinkedIn 自动展开附加步骤失败：expand failed" in payload["message"]
@@ -1915,7 +2223,7 @@ def test_open_job_browser_window_failure_keeps_saved_window_state(tmp_path, monk
         f"/jobs/{job.id}/open-browser-window",
         headers={
             "Accept": "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
         },
         data={},
     )
@@ -1923,6 +2231,8 @@ def test_open_job_browser_window_failure_keeps_saved_window_state(tmp_path, monk
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["fallback"] is True
+    assert payload["opened_url"].startswith("https://www.linkedin.com/jobs/search/?")
+    assert "currentJobId=window-state-scientist" in payload["opened_url"]
     assert main_module.load_browser_window_state(state_path)["window_id"] == "chrome-window-123"
     assert (
         main_module.load_browser_window_state(state_path)["marker_url"]
@@ -2041,8 +2351,7 @@ def test_application_tracker_supports_keyword_and_stage_filters(tmp_path, monkey
     assert "Computational Scientist" in filtered_html
     assert "Manual Research Scientist" not in filtered_html
     assert "Data Scientist" not in filtered_html
-    assert 'name="keyword"' in filtered_html
-    assert 'value="hidden"' in filtered_html
+    assert 'name="keyword" value="hidden"' in filtered_html
     assert '<option value="interviewed" selected>Interviewed</option>' in filtered_html
     assert "关键词：hidden" in filtered_html
     assert "Interviewed" in filtered_html

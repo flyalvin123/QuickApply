@@ -6,6 +6,7 @@ import json
 
 from app.config import SearchProfileConfig, Settings
 from app.fetcher import JobSpyFetcher
+from app.job_dedupe import build_job_dedupe_key
 from app.models import JobRecord, RefreshRun
 from app.resume_profile import ResumeProfile
 from app.scoring import score_job
@@ -62,6 +63,10 @@ class JobMonitorService:
             scored_records.append(
                 JobRecord(
                     unique_key=job.unique_key,
+                    dedupe_key=build_job_dedupe_key(
+                        title=job.title,
+                        company=job.company,
+                    ),
                     profile_slug=profile.slug,
                     profile_label=profile.label,
                     search_term=job.search_term,

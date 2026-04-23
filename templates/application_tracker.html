@@ -155,13 +155,7 @@
 
         <label>
           公司
-          <input
-            type="text"
-            name="company"
-            data-i18n-placeholder="LinkedIn / Indeed / 内推公司"
-            placeholder="LinkedIn / Indeed / 内推公司"
-            required
-          />
+          <input type="text" name="company" placeholder="LinkedIn / Indeed / 内推公司" required />
         </label>
 
         <label>
@@ -176,7 +170,7 @@
 
         <label>
           关联画像
-          <input type="text" name="profile_label" placeholder="Growth Marketing / Customer Success / Revenue Ops" />
+          <input type="text" name="profile_label" placeholder="Scientific ML / Quant / General" />
         </label>
 
         <label>
@@ -186,13 +180,8 @@
       </div>
 
       <label>
-        <span data-i18n-text="备注">备注</span>
-        <textarea
-          name="notes"
-          rows="4"
-          data-i18n-placeholder="比如：内推人、当前状态、面试安排、需要补充的材料"
-          placeholder="比如：内推人、当前状态、面试安排、需要补充的材料"
-        ></textarea>
+        备注
+        <textarea name="notes" rows="4" placeholder="比如：内推人、当前状态、面试安排、需要补充的材料"></textarea>
       </label>
 
       <div class="form-actions">
@@ -235,13 +224,7 @@
 
       <label>
         关键词
-        <input
-          type="text"
-          name="keyword"
-          value="{{ active_keyword }}"
-          data-i18n-placeholder="职位或公司"
-          placeholder="职位或公司"
-        />
+        <input type="text" name="keyword" value="{{ active_keyword }}" placeholder="职位或公司" />
       </label>
 
       <label>
@@ -364,13 +347,8 @@
                 </div>
 
                 <label>
-                  <span data-i18n-text="备注">备注</span>
-                  <textarea
-                    name="notes"
-                    rows="3"
-                    data-i18n-placeholder="例如：约到 phone screen / 推荐人已介绍 / 面试失败原因"
-                    placeholder="例如：约到 phone screen / 推荐人已介绍 / 面试失败原因"
-                  ></textarea>
+                  备注
+                  <textarea name="notes" rows="3" placeholder="例如：约到 phone screen / 推荐人已介绍 / 面试失败原因"></textarea>
                 </label>
 
                 <div class="form-actions">
@@ -415,7 +393,7 @@
       return;
     }
 
-    const storageKey = "quickapply:tracker-chart-series";
+    const storageKey = "resume-job-monitor:tracker-chart-series";
     const buttons = Array.from(chartRoot.querySelectorAll("[data-chart-toggle]"));
     const seriesGroups = Array.from(chartRoot.querySelectorAll("[data-chart-series]"));
     const gridLabels = Array.from(chartRoot.querySelectorAll("[data-chart-grid-label]"));

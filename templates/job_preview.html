@@ -9,7 +9,7 @@
         <p class="section-kicker">岗位描述窗口</p>
         <h3>{{ job.title }}</h3>
         <p class="row-subtitle">
-          {{ job.company }} · {{ job.location_text or "地点未注明" }} · {{ job.source_site|replace("_", " ")|title }}
+          {{ job.company }} · {{ job.location_text or "地点未注明" }} · {{ job_source_summary(job) }}
         </p>
       </div>
       <div class="hero-meta-panel">
@@ -38,7 +38,7 @@
         <div class="mini-surface-head">
           <span>来源与地点</span>
         </div>
-        <p class="mini-surface-text">{{ job.source_site|replace("_", " ")|title }}</p>
+        <p class="mini-surface-text">{{ job_source_summary(job) }}</p>
         <p class="row-subtitle">{{ job.location_text or "地点未注明" }}</p>
       </article>
 

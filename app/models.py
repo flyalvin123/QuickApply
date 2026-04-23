@@ -15,6 +15,7 @@ class JobRecord(SQLModel, table=True):
     unique_key: str = Field(
         sa_column=Column(String(80), unique=True, nullable=False, index=True)
     )
+    dedupe_key: str = Field(default="", index=True)
     profile_slug: str = Field(index=True)
     profile_label: str
     search_term: str
@@ -42,6 +43,7 @@ class JobRecord(SQLModel, table=True):
     missing_keywords: str = Field(default="", sa_column=Column(Text))
     explanation: str = Field(default="", sa_column=Column(Text))
     description: str = Field(default="", sa_column=Column(Text))
+    source_variants_json: str = Field(default="", sa_column=Column(Text))
     date_posted: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )

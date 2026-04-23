@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{{ page_title or title or "QuickApply" }}</title>
+    <title>{{ page_title or title or "Resume Job Monitor" }}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;700;800&display=swap" rel="stylesheet">
@@ -15,7 +15,7 @@
         <div class="sidebar-brand">
           <div class="brand-mark">RM</div>
           <div>
-            <p class="brand-kicker">QuickApply</p>
+            <p class="brand-kicker">Resume Monitor</p>
             <h1 class="brand-title">Career Ops</h1>
           </div>
         </div>
@@ -75,11 +75,7 @@
           </div>
           <div class="sidebar-status {% if refresh_state.running %}running{% endif %}">
             <span class="status-dot"></span>
-            <span
-              class="sidebar-status-copy"
-              id="sidebar-status-copy"
-              data-i18n-text="{{ ('抓取中：' ~ refresh_state.profile_label) if refresh_state.running else '后台待命' }}"
-            >
+            <span class="sidebar-status-copy" id="sidebar-status-copy">
               {% if refresh_state.running %}
               抓取中：{{ refresh_state.profile_label }}
               {% else %}
@@ -178,7 +174,7 @@
                 method: "POST",
                 headers: {
                   Accept: "application/json",
-                  "X-Requested-With": "quickapply",
+                  "X-Requested-With": "resume-job-monitor",
                 },
               });
               const data = await response.json().catch(() => ({}));
@@ -213,7 +209,7 @@
           },
         };
 
-        const scrollStorageKey = "quickapply:scroll-restore";
+        const scrollStorageKey = "resume-job-monitor:scroll-restore";
         const scrollRestoreSelector =
           "form[data-native-scroll-restore][method='post'], form[data-native-scroll-restore][method='POST']";
         // 中文注释：全局滚动恢复改成显式启用，避免 Jobs 这类局部异步刷新的表单误写入整页回退位置。

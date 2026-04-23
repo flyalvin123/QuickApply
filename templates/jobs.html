@@ -31,7 +31,7 @@
 
       <label>
         关键词筛选
-        <input type="text" name="include_keywords" value="{{ include_keywords }}" placeholder="growth, success, saas" />
+        <input type="text" name="include_keywords" value="{{ include_keywords }}" placeholder="postdoc, materials, chemistry" />
       </label>
 
       <label>
@@ -47,7 +47,7 @@
       <label>
         排序
         <select name="sort_by">
-          <option value="recent" {% if sort_by == "recent" %}selected{% endif %}>最近刷新</option>
+          <option value="recent" {% if sort_by == "recent" %}selected{% endif %}>首次抓到</option>
           <option value="score" {% if sort_by == "score" %}selected{% endif %}>匹配分</option>
         </select>
       </label>
@@ -88,12 +88,7 @@
         </div>
         <form method="post" action="{{ url_for('create_excluded_company_entry') }}" class="add-term-form top-space-sm" data-native-scroll-restore>
           <input type="hidden" name="return_to" value="{{ current_query_url }}" />
-          <input
-            type="text"
-            name="company_name"
-            data-i18n-placeholder="手工加入需要屏蔽的公司"
-            placeholder="手工加入需要屏蔽的公司"
-          />
+          <input type="text" name="company_name" placeholder="手工加入需要屏蔽的公司" />
           <button type="submit" class="ghost-button">加入排除</button>
         </form>
       </article>
@@ -131,34 +126,25 @@
     </div>
 
     <div class="jobs-summary-strip" aria-live="polite">
-      <span class="jobs-summary-pill">
-        <span class="jobs-summary-label" data-i18n-text="剩余">剩余</span>
-        <strong>{{ jobs_counts.remaining_count }}</strong>
-      </span>
-      <span class="jobs-summary-pill">
-        <span class="jobs-summary-label" data-i18n-text="已投递">已投递</span>
-        <strong>{{ jobs_counts.applied_count }}</strong>
-      </span>
-      <span class="jobs-summary-pill">
-        <span class="jobs-summary-label" data-i18n-text="已查阅">已查阅</span>
-        <strong>{{ jobs_counts.reviewed_count }}</strong>
-      </span>
+      <span class="jobs-summary-pill" data-jobs-count-key="remaining_count">剩余 <strong>{{ jobs_counts.remaining_count }}</strong></span>
+      <span class="jobs-summary-pill" data-jobs-count-key="applied_count">已投递 <strong>{{ jobs_counts.applied_count }}</strong></span>
+      <span class="jobs-summary-pill" data-jobs-count-key="reviewed_count">已查阅 <strong>{{ jobs_counts.reviewed_count }}</strong></span>
     </div>
 
     {% if jobs_view %}
     <div class="table-shell" id="jobs-table-shell">
-      <div class="table-header job-grid">
-        <span>职位</span>
-        <span>画像 / 来源</span>
-        <span>地点</span>
-        <a href="{{ jobs_sort_urls.score }}" class="table-sort-link {% if sort_by == 'score' %}active{% endif %}">
-          分数
-        </a>
-        <a href="{{ jobs_sort_urls.recent }}" class="table-sort-link {% if sort_by == 'recent' %}active{% endif %}">
-          最近刷新
-        </a>
-        <span>操作</span>
-      </div>
+        <div class="table-header job-grid">
+          <span>职位</span>
+          <span>画像 / 来源</span>
+          <span>地点</span>
+          <a href="{{ jobs_sort_urls.score }}" class="table-sort-link {% if sort_by == 'score' %}active{% endif %}">
+            分数
+          </a>
+          <a href="{{ jobs_sort_urls.recent }}" class="table-sort-link {% if sort_by == 'recent' %}active{% endif %}">
+            首次抓到
+          </a>
+          <span>操作</span>
+        </div>
 
       {% for item in jobs_view %}
       <article class="table-row job-grid" data-job-row="{{ item.job.id }}">
@@ -167,7 +153,7 @@
             type="button"
             class="row-title row-title-button"
             data-job-popup-link
-            data-open-url="{{ item.job.job_url or url_for('job_preview', job_id=item.job.id) }}"
+            data-open-url="{{ job_browser_target_url(item.job) }}"
             data-browser-window-route="{{ url_for('open_job_browser_window', job_id=item.job.id) }}"
           >{{ item.job.title }}</button>
           <div class="row-inline-actions">
@@ -184,7 +170,11 @@
 
         <div class="cell-stack">
           <span>{{ item.job.profile_label }}</span>
-          <span class="row-subtitle">{{ item.job.source_site|replace("_", " ")|title }}</span>
+          <div class="list-meta">
+            {% for source in item.source_variants %}
+            <span class="job-chip">{{ source.label }}</span>
+            {% endfor %}
+          </div>
         </div>
 
         <div class="cell-stack">
@@ -195,7 +185,7 @@
         <div class="list-score">{{ "%.1f"|format(item.job.score) }}</div>
 
         <div class="cell-stack">
-          <span>{{ item.job.last_seen_at|localtime("%Y-%m-%d %H:%M %Z") }}</span>
+          <span>{{ item.job.first_seen_at|localtime("%Y-%m-%d %H:%M %Z") }}</span>
           {% if item.job.date_posted %}
           <span class="row-subtitle">发布 {{ item.job.date_posted|localtime("%Y-%m-%d") }}</span>
           {% endif %}
@@ -219,7 +209,7 @@
             type="button"
             class="ghost-link"
             data-job-popup-link
-            data-open-url="{{ item.job.job_url or url_for('job_preview', job_id=item.job.id) }}"
+            data-open-url="{{ job_browser_target_url(item.job) }}"
             data-browser-window-route="{{ url_for('open_job_browser_window', job_id=item.job.id) }}"
           >岗位描述</button>
         </div>
@@ -235,8 +225,8 @@
 
 <script>
   (() => {
-    const nativeFallbackScrollKey = "quickapply:jobs-native-fallback-scroll";
-    const jobsKeywordStorageKey = "quickapply:jobs-keyword-filters";
+    const nativeFallbackScrollKey = "resume-job-monitor:jobs-native-fallback-scroll";
+    const jobsKeywordStorageKey = "resume-job-monitor:jobs-keyword-filters";
     let pendingJobsRequest = null;
     let jobsFiltersSection = null;
     let jobsTableSection = null;
@@ -271,6 +261,28 @@
       const hasRows = Boolean(tableShell.querySelector("[data-job-row]"));
       tableShell.hidden = !hasRows;
       emptyState.hidden = hasRows;
+    }
+
+    function updateJobsSummaryCounts(summaryDelta = {}) {
+      if (!summaryDelta || typeof summaryDelta !== "object") return;
+      for (const [countKey, deltaValue] of Object.entries(summaryDelta)) {
+        const strong = document.querySelector(`[data-jobs-count-key="${countKey}"] strong`);
+        if (!(strong instanceof HTMLElement)) continue;
+        const currentValue = Number.parseInt(strong.textContent || "0", 10);
+        const delta = Number.parseInt(String(deltaValue), 10);
+        if (Number.isNaN(currentValue) || Number.isNaN(delta)) continue;
+        strong.textContent = String(Math.max(0, currentValue + delta));
+      }
+    }
+
+    function removeJobRowLocally(jobId, summaryDelta = {}) {
+      if (!jobId) return false;
+      const row = document.querySelector(`[data-job-row="${jobId}"]`);
+      if (!(row instanceof HTMLElement)) return false;
+      row.remove();
+      updateJobsSummaryCounts(summaryDelta);
+      syncEmptyState();
+      return true;
     }
 
     function jobsFilterForm() {
@@ -363,9 +375,16 @@
 
       includeInput.value = persisted.include_keywords;
       excludeInput.value = persisted.exclude_keywords;
-      loadJobsView(buildJobsViewUrl(form), { pushHistory: false }).finally(() => {
-        restoreNativeFallbackScrollState();
-      });
+      loadJobsView(buildJobsViewUrl(form), { pushHistory: false })
+        .catch((error) => {
+          console.error(error);
+          renderMessage(
+            error instanceof Error ? error.message : runtimeText("requestFailed", { status: "unknown" }, "请求失败，请查看终端日志。"),
+          );
+        })
+        .finally(() => {
+          restoreNativeFallbackScrollState();
+        });
       return true;
     }
 
@@ -421,16 +440,20 @@
       HTMLFormElement.prototype.submit.call(form);
     }
 
+    function formActionUrl(form) {
+      return form.getAttribute("action") || form.action || window.location.href;
+    }
+
     async function submitJobAction(form, { timeoutMs = 8000 } = {}) {
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        const response = await fetch(form.action, {
+        const response = await fetch(formActionUrl(form), {
           method: "POST",
           headers: {
             Accept: "application/json",
-            "X-Requested-With": "quickapply",
+            "X-Requested-With": "resume-job-monitor",
           },
           body: new FormData(form),
           signal: controller.signal,
@@ -457,7 +480,7 @@
     }
 
     function buildJobsViewUrl(form) {
-      const url = new URL(form.action || window.location.href, window.location.origin);
+      const url = new URL(formActionUrl(form), window.location.origin);
       url.search = "";
       const params = new URLSearchParams();
       for (const [key, value] of new FormData(form).entries()) {
@@ -531,7 +554,7 @@
           return;
         }
         console.error(error);
-        window.location.assign(url);
+        throw error;
       } finally {
         if (pendingJobsRequest === controller) {
           pendingJobsRequest = null;
@@ -565,7 +588,11 @@
       const url = sortLink.getAttribute("href");
       if (!url) return;
       event.preventDefault();
-      loadJobsView(url);
+      loadJobsView(url).catch((error) => {
+        renderMessage(
+          error instanceof Error ? error.message : runtimeText("requestFailed", { status: "unknown" }, "请求失败，请查看终端日志。"),
+        );
+      });
     });
 
     document.addEventListener("submit", async (event) => {
@@ -575,7 +602,14 @@
       if (form.matches("#jobs-filters form[method='get'], #jobs-filters form[method='GET']")) {
         event.preventDefault();
         persistJobsKeywordFiltersFromForm(form);
-        await loadJobsView(buildJobsViewUrl(form));
+        try {
+          await loadJobsView(buildJobsViewUrl(form));
+        } catch (error) {
+          console.error(error);
+          renderMessage(
+            error instanceof Error ? error.message : runtimeText("requestFailed", { status: "unknown" }, "请求失败，请查看终端日志。"),
+          );
+        }
         return;
       }
 
@@ -587,13 +621,22 @@
         }
         try {
           const data = await submitJobAction(form);
-          await loadJobsView(window.location.href, { pushHistory: false });
           renderMessage(data.message || "操作已完成。");
+          if (data.remove_job) {
+            removeJobRowLocally(String(data.job_id || ""), data.summary_delta || {});
+          }
+          loadJobsView(window.location.href, { pushHistory: false }).catch((error) => {
+            console.error(error);
+            renderMessage(
+              error instanceof Error ? error.message : runtimeText("requestFailed", { status: "unknown" }, "请求失败，请查看终端日志。"),
+            );
+          });
         } catch (error) {
           console.error(error);
           renderMessage(
             error instanceof Error ? error.message : runtimeText("requestFailed", { status: "unknown" }, "请求失败，请查看终端日志。"),
           );
+          submitFormNatively(form);
         } finally {
           if (submitButton) {
             submitButton.disabled = false;
@@ -606,24 +649,35 @@
 
       event.preventDefault();
       const submitButton = form.querySelector('button[type="submit"]');
-      let nativeFallbackTriggered = false;
       if (submitButton) {
         submitButton.disabled = true;
       }
       try {
         const data = await submitJobAction(form);
-        await loadJobsView(window.location.href, { pushHistory: false });
         renderMessage(data.message || "操作已完成。");
+        if (data.remove_job) {
+          removeJobRowLocally(String(data.job_id || ""), data.summary_delta || {});
+        }
+        loadJobsView(window.location.href, { pushHistory: false }).catch((error) => {
+          console.error(error);
+          renderMessage(
+            error instanceof Error
+              ? error.message
+              : window.resumeJobMonitor?.translateText?.("异步提交失败，请查看终端日志。") ||
+                  "异步提交失败，请查看终端日志。",
+          );
+        });
       } catch (error) {
         console.error(error);
         renderMessage(
-          window.resumeJobMonitor?.translateText?.("异步提交失败，正在改用普通提交。") ||
-            "异步提交失败，正在改用普通提交。",
+          error instanceof Error
+            ? error.message
+            : window.resumeJobMonitor?.translateText?.("异步提交失败，请查看终端日志。") ||
+                "异步提交失败，请查看终端日志。",
         );
-        nativeFallbackTriggered = true;
         submitFormNatively(form);
       } finally {
-        if (submitButton && !nativeFallbackTriggered) {
+        if (submitButton) {
           submitButton.disabled = false;
         }
       }
@@ -631,7 +685,12 @@
 
     window.addEventListener("popstate", () => {
       if (window.location.pathname !== "/jobs") return;
-      loadJobsView(window.location.href, { pushHistory: false });
+      loadJobsView(window.location.href, { pushHistory: false }).catch((error) => {
+        console.error(error);
+        renderMessage(
+          error instanceof Error ? error.message : runtimeText("requestFailed", { status: "unknown" }, "请求失败，请查看终端日志。"),
+        );
+      });
     });
 
     if (!restorePersistedJobsKeywordFiltersIfNeeded()) {

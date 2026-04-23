@@ -312,14 +312,14 @@ def test_tailor_service_session_prompt_uses_role_md_not_snapshot(tmp_path) -> No
     assert "这是当前已建立 Codex session 的后续回合" in revision_prompt
     assert "可选基础模板" not in revision_prompt
     assert "# 发给 Codex Session 的指令" in revision_prompt
-    assert "当前主链接" in revision_prompt
+    assert "Google Scholar 链接" in revision_prompt
     assert "underline 强调点" in revision_prompt
     assert "只写 `resume_revision_advice.md`" in revision_prompt
     assert "不允许修改 .codex、.claude" in prompt
     assert "role-project-matcher.md" not in prompt
     assert "role-project-matcher.md" not in revision_prompt
     assert "这一步不读取外部 skill 文件，而是使用内置的固定规则来建立或恢复同一个 Codex session" in service._build_session_start_prompt(job, workspace)  # noqa: SLF001
-    assert "Built a 14-account customer reference bench" in revision_prompt
+    assert "reference.md 中带状态的最新条目:" in revision_prompt
 
 
 def test_revision_advice_prefers_final_resume_when_available(tmp_path) -> None:
@@ -347,9 +347,9 @@ def test_revision_advice_prefers_final_resume_when_available(tmp_path) -> None:
     workspace = service.ensure_workspace(job)
     workspace.final_resume_path.write_text(
         (
-            "https://www.linkedin.com/in/final-version\n"
-            "\\section*{Selected Wins}\n"
-            "\\item Recovered $1.2M ARR through renewal planning.\n"
+            "\\section*{Selected Publications}\n"
+            "\\item Science, Accepted.\n"
+            "\\item Google Scholar: https://scholar.google.com/citations?user=final-version\n"
             "\\underline{Final-version emphasis}\n"
         ),
         encoding="utf-8",
@@ -359,8 +359,7 @@ def test_revision_advice_prefers_final_resume_when_available(tmp_path) -> None:
 
     assert str(workspace.final_resume_path) in revision_prompt
     assert "当前简历来源: final tex" in revision_prompt
-    assert "https://www.linkedin.com/in/final-version" in revision_prompt
-    assert "Recovered $1.2M ARR through renewal planning." in revision_prompt
+    assert "https://scholar.google.com/citations?user=final-version" in revision_prompt
     assert "Final-version emphasis" in revision_prompt
 
 
@@ -526,9 +525,9 @@ def test_build_codex_command_uses_json_and_top_level_cd() -> None:
         output_path=ROOT_DIR / "tmp-last-message.md",
     )
 
-    assert fresh_command[:4] == ["codex", "-C", str(ROOT_DIR), "exec"]
+    assert fresh_command[:4] == ["codex", "-C", str(ROOT_DIR.parent), "exec"]
     assert "--json" in fresh_command
-    assert resumed_command[:5] == ["codex", "-C", str(ROOT_DIR), "exec", "resume"]
+    assert resumed_command[:5] == ["codex", "-C", str(ROOT_DIR.parent), "exec", "resume"]
     assert "--json" in resumed_command
     assert resumed_command[-2:] == ["session-abc", "-"]
 

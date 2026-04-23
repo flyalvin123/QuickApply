@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import os
 from pathlib import Path
 import re
 
 import yaml
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG_PATH = Path(
-    os.getenv("QUICKAPPLY_CONFIG_PATH", ROOT_DIR / "config" / "search_profiles.yaml")
-)
+DEFAULT_CONFIG_PATH = ROOT_DIR / "config" / "search_profiles.yaml"
 
 
 @dataclass
@@ -21,7 +18,7 @@ class AppConfig:
     default_min_score: int = 0
     min_score_to_store: int = 18
     proxy_file: str = "config/proxies.local.txt"
-    workspaces_dir: str = "data/workspaces"
+    workspaces_dir: str = "../Role"
     codex_timeout_seconds: int = 1200
 
 
@@ -76,9 +73,7 @@ def _resolve_database_url(database_url: str) -> str:
 
 
 def load_settings(config_path: Path | None = None) -> Settings:
-    path = config_path or Path(
-        os.getenv("QUICKAPPLY_CONFIG_PATH", DEFAULT_CONFIG_PATH)
-    )
+    path = config_path or DEFAULT_CONFIG_PATH
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
     app = AppConfig(**(raw.get("app") or {}))
@@ -92,21 +87,6 @@ def load_settings(config_path: Path | None = None) -> Settings:
         resume_profile=resume_profile,
         search_profiles=search_profiles,
     )
-    settings.app.database_url = os.getenv(
-        "QUICKAPPLY_DATABASE_URL",
-        settings.app.database_url,
-    )
-    settings.app.workspaces_dir = os.getenv(
-        "QUICKAPPLY_WORKSPACES_DIR",
-        settings.app.workspaces_dir,
-    )
-    settings.app.proxy_file = os.getenv(
-        "QUICKAPPLY_PROXY_FILE",
-        settings.app.proxy_file,
-    )
-    codex_timeout = os.getenv("QUICKAPPLY_CODEX_TIMEOUT_SECONDS", "").strip()
-    if codex_timeout:
-        settings.app.codex_timeout_seconds = int(codex_timeout)
     settings.app.database_url = _resolve_database_url(settings.app.database_url)
     return settings
 

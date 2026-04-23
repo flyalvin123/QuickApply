@@ -1,7 +1,7 @@
 [project]
-name = "quickapply"
+name = "resume-job-monitor"
 version = "0.1.0"
-description = "Local JobSpy-powered job monitor with tracker and Codex tailoring workflow"
+description = "Resume-driven job monitoring dashboard for targeted applications"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [

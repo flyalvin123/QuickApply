@@ -23,14 +23,16 @@ from app.config import (
     save_search_terms,
 )
 from app.fetcher import JobSpyFetcher
+from app.job_dedupe import labeled_source_variants
 from app.location_utils import (
     COUNTRY_FILTER_OPTIONS,
+    linkedin_job_detail_shell_url,
     job_country_label,
     linkedin_jobs_search_url,
     normalize_selected_countries,
     source_site_home_url,
 )
-from app.models import ApplicationTrack, TailorRun
+from app.models import ApplicationTrack, JobRecord, TailorRun
 from app.resume_profile import build_resume_profile
 from app.scheduler import build_scheduler
 from app.scoring import (
@@ -108,7 +110,7 @@ MARKDOWN_ALLOWED_ATTRIBUTES = {
     "td": ["colspan", "rowspan"],
 }
 BROWSER_WINDOW_STATE_FILENAME = "chrome_job_window_state.json"
-JOB_BROWSER_WINDOW_MARKER_TITLE = "QuickApply Browser Window Marker"
+JOB_BROWSER_WINDOW_MARKER_TITLE = "Resume Job Monitor Browser Window Marker"
 JOB_BROWSER_WINDOW_MARKER_TEXT = "This tab marks the dedicated Chrome job browser window."
 
 
@@ -271,6 +273,7 @@ on run argv
   set existingWindowId to item 2 of argv
   set markerUrl to item 3 of argv
   set siteBehavior to item 4 of argv
+  set appOrigin to my originFromUrl(markerUrl)
 
   tell application "Finder"
     set screenBounds to bounds of window of desktop
@@ -305,6 +308,7 @@ on run argv
 
   tell application "Google Chrome"
     activate
+    my closeMarkerTabsFromUnsafeWindows(markerUrl, appOrigin)
     set targetWindow to missing value
     set createdNewWindow to false
 
@@ -313,12 +317,14 @@ on run argv
       if targetWindow is not missing value then
         if my windowHasMarkerTab(targetWindow, markerUrl) is false then
           set targetWindow to missing value
+        else if my windowHasUnsafeAppTab(targetWindow, markerUrl, appOrigin) then
+          set targetWindow to missing value
         end if
       end if
     end if
 
     if targetWindow is missing value then
-      set targetWindow to my findWindowByMarker(markerUrl)
+      set targetWindow to my findWindowByMarker(markerUrl, appOrigin)
     end if
 
     if targetWindow is missing value then
@@ -353,6 +359,24 @@ on run argv
   end tell
 end run
 
+on originFromUrl(rawUrl)
+  set previousDelimiters to AppleScript's text item delimiters
+  try
+    set AppleScript's text item delimiters to "/"
+    set urlItems to text items of rawUrl
+    if (count of urlItems) < 3 then
+      set AppleScript's text item delimiters to previousDelimiters
+      return ""
+    end if
+    set normalizedOrigin to (item 1 of urlItems) & "//" & (item 3 of urlItems)
+    set AppleScript's text item delimiters to previousDelimiters
+    return normalizedOrigin
+  on error
+    set AppleScript's text item delimiters to previousDelimiters
+    return ""
+  end try
+end originFromUrl
+
 on findWindowById(existingWindowId)
   tell application "Google Chrome"
     repeat with w in windows
@@ -379,19 +403,61 @@ on findTabIndexByUrl(targetWindow, expectedUrl)
 end findTabIndexByUrl
 
 on windowHasMarkerTab(targetWindow, markerUrl)
-  return (my findTabIndexByUrl(targetWindow, markerUrl)) is not 0
+  return (my findTabIndexByUrl(targetWindow, markerUrl)) is 1
 end windowHasMarkerTab
 
-on findWindowByMarker(markerUrl)
+on isAllowedDedicatedAppUrl(candidateUrl, markerUrl, appOrigin)
+  if candidateUrl is markerUrl then return true
+  if appOrigin is "" then return false
+  if candidateUrl does not start with appOrigin then return false
+  if candidateUrl contains "/jobs/" and candidateUrl contains "/preview" then return true
+  return false
+end isAllowedDedicatedAppUrl
+
+on windowHasUnsafeAppTab(targetWindow, markerUrl, appOrigin)
+  tell application "Google Chrome"
+    set tabCount to count of tabs of targetWindow
+    repeat with tabIndex from 1 to tabCount
+      try
+        set candidateUrl to (URL of tab tabIndex of targetWindow as text)
+        if appOrigin is not "" and candidateUrl starts with appOrigin then
+          if my isAllowedDedicatedAppUrl(candidateUrl, markerUrl, appOrigin) is false then
+            return true
+          end if
+        end if
+      end try
+    end repeat
+  end tell
+  return false
+end windowHasUnsafeAppTab
+
+on findWindowByMarker(markerUrl, appOrigin)
   tell application "Google Chrome"
     repeat with w in windows
       if my windowHasMarkerTab(w, markerUrl) then
-        return w
+        if my windowHasUnsafeAppTab(w, markerUrl, appOrigin) is false then
+          return w
+        end if
       end if
     end repeat
   end tell
   return missing value
 end findWindowByMarker
+
+on closeMarkerTabsFromUnsafeWindows(markerUrl, appOrigin)
+  tell application "Google Chrome"
+    repeat with w in windows
+      set markerTabIndex to my findTabIndexByUrl(w, markerUrl)
+      if markerTabIndex is not 0 then
+        if my windowHasUnsafeAppTab(w, markerUrl, appOrigin) then
+          try
+            close tab markerTabIndex of w
+          end try
+        end if
+      end if
+    end repeat
+  end tell
+end closeMarkerTabsFromUnsafeWindows
 
 on firstNonMarkerTabIndex(targetWindow, markerUrl)
   tell application "Google Chrome"
@@ -603,13 +669,42 @@ def create_app() -> Flask:
     def is_async_request() -> bool:
         accept = request.headers.get("Accept", "")
         requested_with = request.headers.get("X-Requested-With", "")
-        return "application/json" in accept or requested_with == "quickapply"
+        return "application/json" in accept or requested_with == "resume-job-monitor"
 
     def json_message(message: str, *, payload: dict[str, object] | None = None, status: int = 200):
         response_payload = {"ok": status < 400, "message": message}
         if payload:
             response_payload.update(payload)
         return jsonify(response_payload), status
+
+    def job_source_variants(job: JobRecord) -> list[dict[str, str]]:
+        return labeled_source_variants(
+            job.source_variants_json,
+            fallback_site=job.source_site,
+            fallback_url=job.job_url,
+        )
+
+    def job_source_summary(job: JobRecord) -> str:
+        variants = job_source_variants(job)
+        if not variants:
+            return "Unknown"
+        return " / ".join(item["label"] for item in variants)
+
+    def job_browser_target_url(job: JobRecord, *, absolute_preview: bool = False) -> str:
+        # LinkedIn 职位统一跳到搜索壳页，并带 currentJobId，尽量保持双栏详情体验。
+        linkedin_shell_url = linkedin_job_detail_shell_url(job)
+        if linkedin_shell_url:
+            return linkedin_shell_url
+        if job.job_url:
+            return job.job_url
+        preview_url = url_for("job_preview", job_id=job.id)
+        if absolute_preview:
+            return f"{request.host_url.rstrip('/')}{preview_url}"
+        return preview_url
+
+    web_app.jinja_env.globals["job_browser_target_url"] = job_browser_target_url
+    web_app.jinja_env.globals["job_source_variants"] = job_source_variants
+    web_app.jinja_env.globals["job_source_summary"] = job_source_summary
 
     def build_scoring_model() -> dict[str, object]:
         resume_profile = web_app.config["resume_profile"]
@@ -772,6 +867,8 @@ def create_app() -> Flask:
             {
                 "job": job,
                 "country_label": job_country_label(job),
+                "source_variants": job_source_variants(job),
+                "source_summary": job_source_summary(job),
             }
             for job in jobs
         ]
@@ -2259,7 +2356,15 @@ def create_app() -> Flask:
         repository.create_excluded_company(job.company)
         message = f"已排除公司 {job.company}，相关职位后续不会再出现在列表中。"
         if is_async_request():
-            return json_message(message, payload={"job_id": job_id, "remove_job": True})
+            return json_message(
+                message,
+                payload={
+                    "job_id": job_id,
+                    "remove_job": True,
+                    "remove_reason": "exclude_company",
+                    "summary_delta": {"remaining_count": -1},
+                },
+            )
         return redirect(f"{redirect_target}{separator}message={message}")
 
     @web_app.post("/jobs/<int:job_id>/application")
@@ -2277,14 +2382,34 @@ def create_app() -> Flask:
             repository.sync_application_track_for_job(job_id, applied_at=None)
             message = "已取消投递标记。"
             if is_async_request():
-                return json_message(message, payload={"job_id": job_id, "remove_job": False})
+                return json_message(
+                    message,
+                    payload={
+                        "job_id": job_id,
+                        "remove_job": False,
+                        "remove_reason": "clear_application",
+                        "summary_delta": {},
+                    },
+                )
             return redirect(f"{redirect_target}{separator}message={message}")
 
         # 中文注释：职位页里的投递标记和独立 Tracker 必须同步，避免两个入口状态不一致。
         repository.sync_application_track_for_job(job_id, applied_at=datetime.now(timezone.utc))
         message = "已标记为已投递。"
         if is_async_request():
-            return json_message(message, payload={"job_id": job_id, "remove_job": True})
+            return json_message(
+                message,
+                payload={
+                    "job_id": job_id,
+                    "remove_job": True,
+                    "remove_reason": "applied",
+                    "summary_delta": {
+                        "remaining_count": -1,
+                        "applied_count": 1,
+                        "reviewed_count": 1,
+                    },
+                },
+            )
         return redirect(f"{redirect_target}{separator}message={message}")
 
     @web_app.post("/jobs/<int:job_id>/dismiss")
@@ -2302,7 +2427,18 @@ def create_app() -> Flask:
             abort(404)
         message = "已标记为不合适，后续不会再出现在职位表格里。"
         if is_async_request():
-            return json_message(message, payload={"job_id": job_id, "remove_job": True})
+            return json_message(
+                message,
+                payload={
+                    "job_id": job_id,
+                    "remove_job": True,
+                    "remove_reason": "dismissed",
+                    "summary_delta": {
+                        "remaining_count": -1,
+                        "reviewed_count": 1,
+                    },
+                },
+            )
         return redirect(f"{redirect_target}{separator}message={message}")
 
     @web_app.get("/application-tracker")
@@ -2650,7 +2786,7 @@ def create_app() -> Flask:
             else False
         )
         deletion_message = (
-            "已删除精修任务与 Tailor 工作区。"
+            "已删除精修任务与 Role 工作区。"
             if workspace_deleted
             else "已删除精修任务记录。"
         )
@@ -2762,7 +2898,7 @@ def create_app() -> Flask:
             **build_shell_context(
                 current_page="jobs",
                 page_title=job.title,
-                page_subtitle=f"{job.company} · {job.location_text or '地点未注明'} · {job.source_site}",
+                page_subtitle=f"{job.company} · {job.location_text or '地点未注明'} · {job_source_summary(job)}",
                 page_sections=[
                     {"id": "job-workspace", "label": "工作区"},
                     {"id": "job-preview", "label": "PDF 预览"},
@@ -2822,7 +2958,7 @@ def create_app() -> Flask:
             **build_shell_context(
                 current_page="jobs",
                 page_title=job.title,
-                page_subtitle=f"{job.company} · {job.location_text or '地点未注明'} · {job.source_site}",
+                page_subtitle=f"{job.company} · {job.location_text or '地点未注明'} · {job_source_summary(job)}",
                 page_sections=[
                     {"id": "job-preview-summary", "label": "岗位概览"},
                     {"id": "job-preview-description", "label": "岗位描述"},
@@ -2869,10 +3005,7 @@ def create_app() -> Flask:
         if job is None:
             abort(404)
 
-        target_url = (
-            job.job_url
-            or f"{request.host_url.rstrip('/')}{url_for('job_preview', job_id=job_id)}"
-        )
+        target_url = job_browser_target_url(job, absolute_preview=True)
         payload = {
             "opened_url": target_url,
             "mode": "chrome_dedicated_window",

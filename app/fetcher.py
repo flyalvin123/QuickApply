@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import subprocess
 import sys
@@ -12,6 +11,7 @@ from typing import Any
 from dateutil import parser as date_parser
 
 from app.config import ROOT_DIR, SearchProfileConfig
+from app.job_dedupe import build_job_dedupe_key
 
 JOBSPY_RUNNER = r"""
 import json
@@ -121,17 +121,22 @@ def _build_unique_key(
     company: str,
     location_text: str,
     job_url: str,
+    *,
+    city: str = "",
+    state: str = "",
+    country: str = "",
 ) -> str:
-    stable_text = "|".join(
-        [
-            source_site.lower(),
-            title.lower(),
-            company.lower(),
-            location_text.lower(),
-            job_url.lower(),
-        ]
+    _ = source_site, job_url
+    # 中文注释：这里故意不把来源站点和 URL 放进 dedupe key。
+    # 同岗跨 LinkedIn / Indeed / 同站不同链接时，需要先进入同一个合并桶。
+    return build_job_dedupe_key(
+        title=title,
+        company=company,
+        location_text=location_text,
+        city=city,
+        state=state,
+        country=country,
     )
-    return hashlib.sha1(stable_text.encode("utf-8")).hexdigest()
 
 
 class JobSpyFetcher:
@@ -174,7 +179,7 @@ class JobSpyFetcher:
     def fetch_profile(
         self, profile: SearchProfileConfig
     ) -> tuple[list[FetchedJob], list[str], list[dict[str, Any]]]:
-        jobs_by_key: dict[str, FetchedJob] = {}
+        jobs: list[FetchedJob] = []
         warnings: list[str] = []
         query_details: list[dict[str, Any]] = []
 
@@ -259,8 +264,12 @@ class JobSpyFetcher:
                         company,
                         location_text or f"{city}, {state}",
                         job_url,
+                        city=city,
+                        state=state,
+                        country=country,
                     )
-                    jobs_by_key[key] = FetchedJob(
+                    jobs.append(
+                        FetchedJob(
                         unique_key=key,
                         search_term=search_term,
                         source_site=site or "unknown",
@@ -280,5 +289,6 @@ class JobSpyFetcher:
                         description=description,
                         date_posted=date_posted,
                     )
+                    )
 
-        return list(jobs_by_key.values()), warnings, query_details
+        return jobs, warnings, query_details
